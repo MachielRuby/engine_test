@@ -5,12 +5,12 @@
   "type": "PLANAR",
   "properties": {
     "left": 0,
-    "top": 222,
-    "width": 553,
-    "height": 737,
-    "isRotated": true,
-    "originalWidth": 553,
-    "originalHeight": 1180
+    "top": 285,
+    "width": 1279,
+    "height": 1705,
+    "isRotated": false,
+    "originalWidth": 1279,
+    "originalHeight": 2275
   },
   "resources": {
     "originalImage": "02_original.jpg",
@@ -18,6 +18,6 @@
     "thumbnailImage": "02_thumbnail.jpg",
     "luminanceImage": "02_luminance.jpg"
   },
-  "created": 1773660670054,
-  "updated": 1773660670054
+  "created": 1773708874666,
+  "updated": 1773708874666
 }

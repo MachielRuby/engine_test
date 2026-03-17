@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Image Target Demo</title>
+  <style>
+    *{margin:0;padding:0}
+    html,body{width:100%;height:100%;overflow:hidden}
+    #camerafeed{position:fixed;top:0;left:0;width:100%;height:100%;background:#000}
+    #overlay3d{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none}
+    #info{position:fixed;top:10px;left:10px;right:10px;background:rgba(0,0,0,.7);color:#fff;border-radius:8px;padding:12px;font:14px/1.4 sans-serif;z-index:10}
+  </style>
+</head>
+<body>
+  <canvas id="camerafeed"></canvas>
+  <canvas id="overlay3d"></canvas>
+  <div id="info">Loading...</div>
+
+  <!-- Three.js r137 -->
+  <script src="https://unpkg.com/three@0.137.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.137.0/examples/js/loaders/DRACOLoader.js"></script>
+  <script src="https://unpkg.com/three@0.137.0/examples/js/loaders/GLTFLoader.js"></script>
+
+  <script>
+    var canvas = document.getElementById('camerafeed');
+    var overlayCanvas = document.getElementById('overlay3d');
+    function resize() {
+      var dpr = window.devicePixelRatio || 1;
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      overlayCanvas.width = window.innerWidth * dpr;
+      overlayCanvas.height = window.innerHeight * dpr;
+      overlayCanvas.style.width = window.innerWidth + 'px';
+      overlayCanvas.style.height = window.innerHeight + 'px';
+    }
+    resize();
+    window.addEventListener('resize', resize);
+  </script>
+  <script>
+    (function() {
+      var realC8 = null;
+      Object.defineProperty(window, '_c8', {
+        get: function() { return realC8; },
+        set: function(obj) {
+          realC8 = obj;
+          if (obj && typeof obj === 'object') {
+            Object.defineProperty(obj, 'checkAllZeroes', {
+              get: function() { return 0; },
+              set: function() {},
+              configurable: true, enumerable: true
+            });
+          }
+        },
+        configurable: true, enumerable: true
+      });
+
+      var t = 0;
+      setInterval(function() {
+        t += 0.05;
+        try {
+          window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', {
+            alpha: 0.1 + Math.sin(t) * 0.5,
+            beta: 90 + Math.sin(t * 1.3) * 2,
+            gamma: Math.cos(t * 0.7) * 1
+          }));
+        } catch(e) {}
+      }, 16);
+    })();
+  </script>
+
+  <script src="./xr-standalone/xr.js" data-preload-chunks="slam"></script>
+
+  <script>
+    var info = document.getElementById('info');
+
+    // ---- Three.js 场景（透明覆盖层）----
+    var renderer3d = new THREE.WebGLRenderer({ canvas: overlayCanvas, alpha: true, antialias: true });
+    renderer3d.setClearColor(0x000000, 0);
+    renderer3d.setSize(overlayCanvas.width, overlayCanvas.height, false);
+
+    var scene3d = new THREE.Scene();
+    var camera3d = new THREE.PerspectiveCamera(60, overlayCanvas.width / overlayCanvas.height, 0.01, 1000);
+    scene3d.add(camera3d);
+
+    // 灯光
+    scene3d.add(new THREE.AmbientLight(0xffffff, 0.8));
+    var dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    dirLight.position.set(1, 2, 1);
+    scene3d.add(dirLight);
+
+    var models = {};  // { '01': Group, '02': Group }
+    var modelsToLoad = ['01', '02'];
+    var modelsLoaded = 0;
+
+    // 归一化模型：将模型缩放到 1 个单位大小，居中到原点
+    function normalizeModel(scene) {
+      var box = new THREE.Box3().setFromObject(scene);
+      var size = new THREE.Vector3();
+      var center = new THREE.Vector3();
+      box.getSize(size);
+      box.getCenter(center);
+      var maxDim = Math.max(size.x, size.y, size.z);
+      if (maxDim > 0) {
+        var s = 1.0 / maxDim;
+        scene.scale.multiplyScalar(s);
+        scene.position.sub(center.multiplyScalar(s));
+      }
+    }
+
+    // 加载所有模型，全部加载完才启动 AR
+    function loadAllModels(onComplete) {
+      var dracoLoader = new THREE.DRACOLoader();
+      dracoLoader.setDecoderPath('https://unpkg.com/three@0.137.0/examples/js/libs/draco/');
+      var loader = new THREE.GLTFLoader();
+      loader.setDRACOLoader(dracoLoader);
+
+      modelsToLoad.forEach(function(name) {
+        loader.load('./models/' + name + '.glb', function(gltf) {
+          normalizeModel(gltf.scene);
+
+          var group = new THREE.Group();
+          group.add(gltf.scene);
+          group.visible = false;
+          scene3d.add(group);
+          models[name] = group;
+
+          var box = new THREE.Box3().setFromObject(group);
+          var sz = new THREE.Vector3();
+          box.getSize(sz);
+          console.log('[DEBUG] Model ' + name + ' loaded & normalized, size:', sz.x.toFixed(3), sz.y.toFixed(3), sz.z.toFixed(3));
+
+          modelsLoaded++;
+          info.textContent = 'Loading models... (' + modelsLoaded + '/' + modelsToLoad.length + ')';
+          if (modelsLoaded === modelsToLoad.length) {
+            console.log('[DEBUG] All models loaded, starting AR');
+            onComplete();
+          }
+        }, function(xhr) {
+          if (xhr.total) {
+            var pct = Math.round(xhr.loaded / xhr.total * 100);
+            info.textContent = 'Loading ' + name + '.glb... ' + pct + '%';
+          }
+        }, function(err) {
+          console.error('[DEBUG] Failed to load model ' + name + ':', err);
+          modelsLoaded++;
+          if (modelsLoaded === modelsToLoad.length) onComplete();
+        });
+      });
+    }
+
+    // 放置模型
+    function placeModel(detail) {
+      var group = models[detail.name];
+      if (!group) return;
+      group.position.set(detail.position.x, detail.position.y, detail.position.z);
+      group.quaternion.set(detail.rotation.x, detail.rotation.y, detail.rotation.z, detail.rotation.w);
+      group.scale.set(detail.scale, detail.scale, detail.scale);
+      group.visible = true;
+    }
+
+    function hideModel(name) {
+      var group = models[name];
+      if (group) group.visible = false;
+    }
+
+    // 同步 XR8 相机投影到 Three.js 相机
+    function syncCamera(processCpuResult) {
+      var reality = processCpuResult.reality;
+      if (!reality) return;
+      var intrinsics = reality.intrinsics;
+      var rot = reality.rotation;
+      var pos = reality.position;
+      if (intrinsics) {
+        for (var i = 0; i < 16; i++) {
+          camera3d.projectionMatrix.elements[i] = intrinsics[i];
+        }
+        if (camera3d.projectionMatrixInverse) {
+          camera3d.projectionMatrixInverse.copy(camera3d.projectionMatrix).invert();
+        }
+      }
+      if (rot) camera3d.setRotationFromQuaternion(rot);
+      if (pos) camera3d.position.set(pos.x, pos.y, pos.z);
+    }
+
+    // ---- 图像目标数据 ----
+    var targets = [{
+      name: '01',
+      imagePath: './image-targets/01/01_luminance.jpg',
+      type: 'PLANAR',
+      metadata: null,
+      properties: {
+        left: 0, top: 18, width: 536, height: 715,
+        isRotated: true, originalWidth: 536, originalHeight: 750
+      }
+    }, {
+      name: '02',
+      imagePath: './image-targets/02/02_luminance.jpg',
+      type: 'PLANAR',
+      metadata: null,
+      properties: {
+        left: 0, top: 222, width: 553, height: 737,
+        isRotated: true, originalWidth: 553, originalHeight: 1180
+      }
+    }];
+
+    function startAR() {
+      info.textContent = 'Engine loaded, starting...';
+
+      XR8.addCameraPipelineModules([
+        XR8.GlTextureRenderer.pipelineModule(),   // 摄像头画面
+        XR8.XrController.pipelineModule(),
+        {
+          name: 'app',
+          onStart: function() {
+            info.textContent = 'Camera ready. Point at target.';
+          },
+          onUpdate: function(e) {
+            // 每帧同步相机 + 渲染 Three.js 覆盖层
+            if (e.processCpuResult) {
+              syncCamera(e.processCpuResult);
+            }
+            renderer3d.setSize(overlayCanvas.width, overlayCanvas.height, false);
+            renderer3d.render(scene3d, camera3d);
+          },
+          listeners: [
+            { event: 'reality.imagescanning', process: function(e) {
+              var n = e.detail.imageTargets ? e.detail.imageTargets.length : 0;
+              info.textContent = 'Scanning (' + n + ' targets)';
+            }},
+            { event: 'reality.imagefound', process: function(e) {
+              info.textContent = 'FOUND: ' + e.detail.name;
+              info.style.background = 'rgba(0,150,0,.8)';
+              placeModel(e.detail);
+            }},
+            { event: 'reality.imageupdated', process: function(e) {
+              info.textContent = 'Tracking: ' + e.detail.name;
+              placeModel(e.detail);
+            }},
+            { event: 'reality.imagelost', process: function(e) {
+              info.textContent = 'Lost: ' + e.detail.name + '. Scanning...';
+              info.style.background = 'rgba(0,0,0,.7)';
+              hideModel(e.detail.name);
+            }}
+          ]
+        }
+      ]);
+
+      XR8.XrController.configure({
+        disableWorldTracking: true,
+        imageTargetData: targets
+      });
+
+      XR8.run({
+        canvas: canvas,
+        allowedDevices: XR8.XrConfig.device().ANY,
+        cameraConfig: { direction: XR8.XrConfig.camera().FRONT }
+      });
+    }
+
+    if (window.XR8) { loadAllModels(startAR); }
+    else { window.addEventListener('xrloaded', function() { loadAllModels(startAR); }); }
+  </script>
+</body>
+</html>

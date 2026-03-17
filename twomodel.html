@@ -110,10 +110,10 @@
     dirLight.position.set(1, 2, 1);
     scene3d.add(dirLight);
 
-    var modelConfigs = {
-      '01': { path: './models/01.glb' },
-      '02': { path: './models/02.glb' }
-    };
+    var models = {};
+    var modelsToLoad = ['01', '02'];
+    var modelsLoaded = 0;
+
     var targets = [{
       name: '01',
       imagePath: './image-targets/01/01_luminance.jpg',
@@ -133,14 +133,6 @@
         isRotated: false, originalWidth: 1279, originalHeight: 2275
       }
     }];
-    var models = {};
-    var modelStates = {};
-    var pendingPoses = {};
-    var placeholders = {};
-    var dracoLoader = new THREE.DRACOLoader();
-    dracoLoader.setDecoderPath('https://unpkg.com/three@0.137.0/examples/js/libs/draco/');
-    var gltfLoader = new THREE.GLTFLoader();
-    gltfLoader.setDRACOLoader(dracoLoader);
 
     function normalizeAndCenter(obj) {
       var box = new THREE.Box3().setFromObject(obj);
@@ -156,83 +148,49 @@
       }
     }
 
-    function createPlaceholder(name) {
-      var group = new THREE.Group();
-      var board = new THREE.Mesh(
-        new THREE.BoxGeometry(1, 1, 0.04),
-        new THREE.MeshBasicMaterial({
-          color: 0x00c853,
-          wireframe: true,
-          transparent: true,
-          opacity: 0.9
-        })
-      );
-      var marker = new THREE.Mesh(
-        new THREE.BoxGeometry(0.14, 0.14, 0.14),
-        new THREE.MeshNormalMaterial()
-      );
-      marker.position.z = 0.08;
-      group.add(board);
-      group.add(marker);
-      group.visible = false;
-      scene3d.add(group);
-      placeholders[name] = group;
-      return group;
-    }
+    function loadAllModels(onComplete) {
+      var dracoLoader = new THREE.DRACOLoader();
+      dracoLoader.setDecoderPath('https://unpkg.com/three@0.137.0/examples/js/libs/draco/');
+      var loader = new THREE.GLTFLoader();
+      loader.setDRACOLoader(dracoLoader);
 
-    function applyPose(object3d, detail, scaleMultiplier) {
-      var s = detail.scale * (scaleMultiplier || 1);
-      object3d.position.set(detail.position.x, detail.position.y, detail.position.z);
-      object3d.quaternion.set(detail.rotation.x, detail.rotation.y, detail.rotation.z, detail.rotation.w);
-      object3d.scale.set(s, s, s);
-      object3d.visible = true;
-    }
-
-    function ensureModelLoaded(name) {
-      if (modelStates[name] === 'loading' || modelStates[name] === 'loaded') return;
-      modelStates[name] = 'loading';
-      info.textContent = 'Loading model ' + name + '...';
-
-      gltfLoader.load(modelConfigs[name].path, function(gltf) {
-        normalizeAndCenter(gltf.scene);
-        var group = new THREE.Group();
-        group.add(gltf.scene);
-        group.visible = false;
-        scene3d.add(group);
-        models[name] = group;
-        modelStates[name] = 'loaded';
-
-        if (pendingPoses[name]) {
-          applyPose(group, pendingPoses[name], 1.0);
-          if (placeholders[name]) placeholders[name].visible = false;
-        }
-      }, undefined, function(err) {
-        console.error('[DEBUG] Failed to load model ' + name + ':', err);
-        modelStates[name] = 'failed';
+      modelsToLoad.forEach(function(name) {
+        loader.load('./models/' + name + '.glb', function(gltf) {
+          normalizeAndCenter(gltf.scene);
+          var group = new THREE.Group();
+          group.add(gltf.scene);
+          group.visible = false;
+          scene3d.add(group);
+          models[name] = group;
+          modelsLoaded++;
+          info.textContent = 'Loading models... (' + modelsLoaded + '/' + modelsToLoad.length + ')';
+          if (modelsLoaded === modelsToLoad.length) {
+            info.textContent = 'Models ready. Point at target.';
+            if (onComplete) onComplete();
+          }
+        }, undefined, function(err) {
+          console.error('[DEBUG] Failed to load model ' + name + ':', err);
+          modelsLoaded++;
+          if (modelsLoaded === modelsToLoad.length) {
+            info.textContent = 'Models ready. Point at target.';
+            if (onComplete) onComplete();
+          }
+        });
       });
     }
 
     function placeModel(detail) {
-      var name = detail.name;
-      pendingPoses[name] = detail;
-
-      if (!placeholders[name]) createPlaceholder(name);
-      ensureModelLoaded(name);
-
-      if (modelStates[name] === 'loaded' && models[name]) {
-        applyPose(models[name], detail, 1.0);
-        placeholders[name].visible = false;
-        return;
-      }
-
-      applyPose(placeholders[name], detail, 1.05);
-      info.textContent = 'Tracking ' + name + '... loading model';
+      var group = models[detail.name];
+      if (!group) return;
+      group.position.set(detail.position.x, detail.position.y, detail.position.z);
+      group.quaternion.set(detail.rotation.x, detail.rotation.y, detail.rotation.z, detail.rotation.w);
+      group.scale.set(detail.scale, detail.scale, detail.scale);
+      group.visible = true;
     }
 
     function hideModel(name) {
       var group = models[name];
       if (group) group.visible = false;
-      if (placeholders[name]) placeholders[name].visible = false;
     }
 
     function syncCamera(processCpuResult) {
@@ -264,8 +222,6 @@
             syncViewport();
             requestAnimationFrame(syncViewport);
             setTimeout(syncViewport, 50);
-            ensureModelLoaded('01');
-            setTimeout(function() { ensureModelLoaded('02'); }, 800);
             info.textContent = 'Camera ready. Point at target.';
           },
           onUpdate: function(e) {
@@ -314,9 +270,11 @@
     }
 
     if (window.XR8) {
-      startAR();
+      loadAllModels(startAR);
     } else {
-      window.addEventListener('xrloaded', startAR);
+      window.addEventListener('xrloaded', function() {
+        loadAllModels(startAR);
+      });
     }
   </script>
 </body>

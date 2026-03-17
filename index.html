@@ -27,12 +27,17 @@
     var overlayCanvas = document.getElementById('overlay3d');
     function resize() {
       var dpr = window.devicePixelRatio || 1;
+      // camerafeed canvas 保持物理像素尺寸供 XR8 使用
       canvas.width = window.innerWidth * dpr;
       canvas.height = window.innerHeight * dpr;
-      overlayCanvas.width = window.innerWidth * dpr;
-      overlayCanvas.height = window.innerHeight * dpr;
-      overlayCanvas.style.width = window.innerWidth + 'px';
-      overlayCanvas.style.height = window.innerHeight + 'px';
+      // overlayCanvas 交给 Three.js renderer 管理，不手动设置尺寸
+      if (window._renderer3d) {
+        window._renderer3d.setSize(window.innerWidth, window.innerHeight);
+        if (window._camera3d) {
+          window._camera3d.aspect = window.innerWidth / window.innerHeight;
+          window._camera3d.updateProjectionMatrix();
+        }
+      }
     }
     resize();
     window.addEventListener('resize', resize);
@@ -77,11 +82,17 @@
     // ---- Three.js 场景（透明覆盖层）----
     var renderer3d = new THREE.WebGLRenderer({ canvas: overlayCanvas, alpha: true, antialias: true });
     renderer3d.setClearColor(0x000000, 0);
-    renderer3d.setSize(overlayCanvas.width, overlayCanvas.height, false);
+    // 使用 CSS 逻辑像素尺寸，让 Three.js 自己管理 devicePixelRatio
+    renderer3d.setPixelRatio(window.devicePixelRatio || 1);
+    renderer3d.setSize(window.innerWidth, window.innerHeight);
 
     var scene3d = new THREE.Scene();
-    var camera3d = new THREE.PerspectiveCamera(60, overlayCanvas.width / overlayCanvas.height, 0.01, 1000);
+    var camera3d = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 1000);
     scene3d.add(camera3d);
+
+    // 暴露给 resize 函数使用
+    window._renderer3d = renderer3d;
+    window._camera3d = camera3d;
 
     // 灯光
     scene3d.add(new THREE.AmbientLight(0xffffff, 0.8));
@@ -172,15 +183,17 @@
       var rot = reality.rotation;
       var pos = reality.position;
       if (intrinsics) {
-        for (var i = 0; i < 16; i++) {
-          camera3d.projectionMatrix.elements[i] = intrinsics[i];
-        }
-        if (camera3d.projectionMatrixInverse) {
-          camera3d.projectionMatrixInverse.copy(camera3d.projectionMatrix).invert();
-        }
+        // XR8 intrinsics 是列主序，和 Three.js 一致，直接赋值即可
+        camera3d.projectionMatrix.fromArray(intrinsics);
+        camera3d.projectionMatrixInverse.copy(camera3d.projectionMatrix).invert();
       }
-      if (rot) camera3d.setRotationFromQuaternion(rot);
-      if (pos) camera3d.position.set(pos.x, pos.y, pos.z);
+      if (rot) {
+        // rot 是 {x,y,z,w} 四元数
+        camera3d.quaternion.set(rot.x, rot.y, rot.z, rot.w);
+      }
+      if (pos) {
+        camera3d.position.set(pos.x, pos.y, pos.z);
+      }
     }
 
     // ---- 图像目标数据 ----
@@ -220,7 +233,6 @@
             if (e.processCpuResult) {
               syncCamera(e.processCpuResult);
             }
-            renderer3d.setSize(overlayCanvas.width, overlayCanvas.height, false);
             renderer3d.render(scene3d, camera3d);
           },
           listeners: [
